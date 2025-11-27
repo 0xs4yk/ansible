@@ -1,0 +1,109 @@
+service:
+  flush: 30
+  daemon: false
+  log_level: info
+  parsers_file: /etc/fluent-bit/parsers.conf
+  storage.path: /var/lib/fluent-bit/storage
+  storage.sync: normal
+  storage.checksum: on
+  storage.max_chunks_up: on
+  storage.backlog.mem_limit: 256M
+  storage.metrics: on
+  http_server: on
+  http_port: 2020
+
+pipeline:
+  inputs:
+    - name: tail
+      path: /var/log/auth.log
+      tag: auth.*
+      parser: auth
+      multiline: off
+      storage.type: filesystem
+      read_from_head: true
+      skip_long_lines: on
+      db: /var/lib/fluent-bit/tail.auth.db
+      db.sync: full
+      mem_buf_limit: 64M
+      refresh_interval: 10
+
+    - name: tail
+      tag: audit.*
+      path: /var/log/audit/audit.log
+      parser: auditd
+      multiline: off
+      storage.type: filesystem
+      read_from_head: true
+      skip_long_lines: on
+      db: /var/lib/fluent-bit/tail.audit.db
+      db.sync: full
+      mem_buf_limit: 64M
+      refresh_interval: 10
+
+    - name: systemd
+      tag: systemd.*
+      storage.type: filesystem
+      read_from_tail: true
+      db: /var/lib/fluent-bit/systemd.db
+      db.sync: full
+      mem_buf_limit: 128M
+      strip_underscores: on
+
+    - name: tail
+      tag: kernel.*
+      path: /var/log/kern.log
+      parser: syslog
+      storage.type: filesystem
+      read_from_tail: true
+      db: /var/lib/fluent-bit/systemd.kernel.db
+      db.sync: full
+      mem_buf_limit: 128M
+      strip_underscores: on
+
+    - name: tail
+      tag: ufw.*
+      path: /var/log/ufw.log
+      parser: firewall
+      multiline: off
+      storage.type: filesystem
+      read_from_head: true
+      skip_long_lines: on
+      db: /var/lib/fluent-bit/tail.ufw.db
+      db.sync: full
+      mem_buf_limit: 64M
+      refresh_interval: 10
+
+  filters:
+    - name: record_modifier
+      match: '*.*'
+      record: hostname ${HOSTNAME}
+
+    - name: parser
+      match: ufw.*
+      key_name: message
+      parser: logfmt
+      reserve_data: true
+
+    - name: parser
+      match: audit.*
+      key_name: message
+      parser: logfmt
+      reserve_data: true
+
+  outputs:
+    - name: http
+      match: '*.*'
+      host: 10.94.22.58
+      port: 9428
+      uri: /insert/jsonline?stream_fields=stream&msg_field=log&time_field=date
+      compress: gzip
+      format: json_lines
+      json_date_format: iso8601
+      net.keepalive: on
+      net.keepalive_idle_timeout: 30
+      # Résilience : Buffer sur disque en cas de coupure VictoriaLogs
+      storage.type: filesystem
+      storage.total_limit_size: 5G
+      retry_limit: False
+      # Workers pour paralléliser l'envoi lors de la reprise
+      workers: 2

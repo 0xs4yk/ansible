@@ -1,0 +1,110 @@
+---
+- name: Deploy fluentbit
+  hosts: fs5_workstations
+  become: true
+
+  vars:
+    fluentbit_version: "4.2.0"
+    fluentbit_deb: "fluent-bit-{{ fluentbit_version }}-amd64.deb"
+    fluentbit_base_url: "https://aforge-frdr.biz.nstd.fr.airbusds.corp/artifactory/tsegetl-deb"
+    fluentbit_url: "{{ fluentbit_base_url }}/{{ fluentbit_deb }}"
+    fluentbit_key_path: /usr/share/keyrings/fluent-bit.gpg
+    fluentbit_config_dir: /etc/fluent-bit
+    fluentbit_bin_path: /opt/fluent-bit/bin
+    fluentbit_service_name: fluent-bit
+
+  tasks:
+    - name: Import Fluent Bit GPG key
+      ansible.builtin.template:
+        src: fluent-bit-gpg-key.j2
+        dest: "{{ fluentbit_key_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [install]
+
+    - name: Download and Install
+      block:
+        - name: Create temporary build directory
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: build
+          register: fluentbit_tempdir
+
+        - name: Download Fluentbit deb
+          ansible.builtin.get_url:
+            url: "{{ fluentbit_url }}"
+            dest: "{{ fluentbit_tempdir.path }}/fluent-bit.deb"
+            username: "{{ aforge_artifactory_account.login }}"
+            password: "{{ aforge_artifactory_account.password }}"
+            mode: "0640"
+            timeout: 30
+            retries: 3
+            delay: 5
+
+        - name: Install .deb
+          ansible.builtin.apt:
+            deb: "{{ fluentbit_tempdir.path }}/fluent-bit.deb"
+            state: present
+      tags: [install]
+
+    - name: Ensure fluentbit configuration directory exists
+      ansible.builtin.file:
+        path: "{{ fluentbit_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [config]
+
+    - name: Configure service
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart={{ fluentbit_bin_path }}/fluent-bit -c {{ fluentbit_config_dir }}/fluent-bit.yaml
+        dest: /etc/systemd/system/fluent-bit.service.d/override.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart fluentbit
+      tags: [config]
+
+    - name: Flush
+      ansible.builtin.meta: flush_handlers
+
+    - name: Deploy configuration
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - { src: 'fluentbit.yaml.j2', dest: '{{ fluentbit_config_dir }}/fluent-bit.yaml' }
+        - { src: 'parsers.conf.j2', dest: '{{ fluentbit_config_dir }}/parsers.conf' }
+      notify: restart fluentbit
+      tags: [config]
+
+    - name: Flush handlers
+      ansible.builtin.systemd_service:
+        name: fluent-bit
+        enabled: true
+        state: started
+      tags: [service]
+
+  always:
+    - name: Cleanup tmp
+      ansible.builtin.tempfile:
+        path: "{{ fluentbit_tempdir.path }}"
+        state: absent
+      when: fluentbit_tempdir.path is defined
+
+  handlers:
+    - name: Restart fluentbit
+      listen: restart fluentbit
+      ansible.builtin.systemd_service:
+        name: fluent-bit
+        state: restarted
+        enabled: true
+        daemon_reload: true
