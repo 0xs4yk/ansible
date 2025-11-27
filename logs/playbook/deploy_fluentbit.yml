@@ -86,7 +86,7 @@
       notify: restart fluentbit
       tags: [config]
 
-    - name: Flush handlers
+    - name: Ensure fluentbit service is started
       ansible.builtin.systemd_service:
         name: fluent-bit
         enabled: true

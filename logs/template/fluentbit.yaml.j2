@@ -82,6 +82,7 @@ pipeline:
       match: ufw.*
       key_name: message
       parser: logfmt
+      preserve_key: on
       reserve_data: true
 
     - name: parser
@@ -101,9 +102,7 @@ pipeline:
       json_date_format: iso8601
       net.keepalive: on
       net.keepalive_idle_timeout: 30
-      # Résilience : Buffer sur disque en cas de coupure VictoriaLogs
       storage.type: filesystem
       storage.total_limit_size: 5G
       retry_limit: False
-      # Workers pour paralléliser l'envoi lors de la reprise
       workers: 2
